@@ -1,7 +1,7 @@
 "use client";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
-import { useRouter} from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,8 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { ListChecks, Lock, MessageSquare, Star, Camera, AlertTriangle } from "lucide-react";
-import { Header } from "@/components/Header";
+import { Lock, MessageSquare, Star, Camera, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -106,17 +105,6 @@ export default function HomePage() {
       buttonText: "Unlock Locker",
     },
     {
-      title: "View Login Logs",
-      description: "Check the history of login attempts to your account.",
-      icon: <ListChecks className="h-8 w-8 text-primary" />,
-      action: () =>
-        toast({
-          title: "Feature Coming Soon",
-          description: "Login logs will be available soon.",
-        }),
-      buttonText: "View Logs",
-    },
-    {
       title: "Upload Reference Images",
       description: "Upload reference images for facial recognition.",
       icon: <Camera className="h-8 w-8 text-primary" />,
@@ -145,7 +133,6 @@ export default function HomePage() {
       buttonText: "View Unknown Logs",
     },
   ];
-  
 
   if (authLoading || isDataLoading) {
     return (

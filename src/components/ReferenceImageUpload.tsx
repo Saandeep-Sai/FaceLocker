@@ -13,7 +13,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, ScanFace, AlertCircle } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
-import { getFirestore, collection, addDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, setDoc, doc, deleteDoc } from "firebase/firestore";
 
 export default function ReferenceImageUpload() {
   const { user, loading: authLoading } = useAuth();
@@ -38,7 +38,7 @@ export default function ReferenceImageUpload() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const faceapiRef = useRef<any>(null); // Will store the dynamically imported face-api.js
+  const faceapiRef = useRef<any>(null);
 
   const debouncedToast = useCallback(
     (options: {
@@ -125,13 +125,16 @@ export default function ReferenceImageUpload() {
     }
   };
 
-  const clearExistingImages = () => {
+  const clearExistingImages = async () => {
     if (!user) return;
-    for (let i = 0; i < 20; i++) {
-      const key = `reference_image_${user.uid}_${i}`;
-      localStorage.removeItem(key);
+    try {
+      const db = getFirestore();
+      const userRef = doc(db, "reference_images", user.uid);
+      await deleteDoc(userRef);
+      setImageCount(0);
+    } catch (err) {
+      console.error("Failed to clear existing images:", err);
     }
-    setImageCount(0);
   };
 
   const captureImage = async () => {
@@ -196,13 +199,16 @@ export default function ReferenceImageUpload() {
       return;
     }
 
-    clearExistingImages();
+    await clearExistingImages();
 
     setIsScanning(true);
     setPromptIndex(0);
     setProgressMessage(prompts[0]);
 
     try {
+      const db = getFirestore();
+      const userRef = doc(db, "reference_images", user.uid);
+      const images: string[] = [];
       let capturedFrames = 0;
       const framesToCapture = 20;
       const totalDuration = 80 * 1000;
@@ -220,24 +226,33 @@ export default function ReferenceImageUpload() {
           const result = await captureImage();
 
           if (result) {
-            const key = `reference_image_${user.uid}_${capturedFrames}`;
-            localStorage.setItem(key, result.imageData);
+            images.push(result.imageData);
             capturedFrames++;
           }
           setPromptIndex(capturedFrames);
         }, intervalTime);
       });
 
-      setImageCount(capturedFrames);
-      debouncedToast({
-        title: "Success",
-        description: `${capturedFrames} images saved for recognition.`,
-      });
-      await logUploadAttempt(true, capturedFrames);
+      if (images.length > 0) {
+        await setDoc(userRef, { images, updatedAt: new Date().toISOString() });
+        setImageCount(capturedFrames);
+        debouncedToast({
+          title: "Success",
+          description: `${capturedFrames} images saved for recognition.`,
+        });
+        await logUploadAttempt(true, capturedFrames);
+      } else {
+        debouncedToast({
+          title: "Error",
+          description: "No valid images captured.",
+          variant: "destructive",
+        });
+        await logUploadAttempt(false, 0);
+      }
     } catch (error: any) {
       debouncedToast({
         title: "Error",
-        description: "Failed to capture images.",
+        description: "Failed to capture or save images.",
         variant: "destructive",
       });
       await logUploadAttempt(false, 0);

@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import * as faceapi from "face-api.js";
 import { useAuth } from "@/lib/AuthContext";
-import { getFirestore, collection, addDoc } from "firebase/firestore";
+import { getFirestore, collection, addDoc, doc, getDoc } from "firebase/firestore";
 import { detectBlink } from "./blink_detection";
 
 interface FacialRecognitionProps {
@@ -24,7 +24,7 @@ export default function FacialRecognition({
     "pending" | "ready" | "scanning" | "verified" | "unknown" | "error"
   >("pending");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0); // Progress bar state
+  const [progress, setProgress] = useState(0);
   const isMounted = useRef(true);
 
   const capturePhoto = (): string | null => {
@@ -145,29 +145,42 @@ export default function FacialRecognition({
   const loadReferenceDescriptors = async () => {
     if (!user) throw new Error("User not authenticated");
     const descriptors: Float32Array[] = [];
-    for (let i = 0; i < 20; i++) {
-      const key = `reference_image_${user.uid}_${i}`;
-      const dataUrl = localStorage.getItem(key);
-      if (!dataUrl) continue;
-      const img = await faceapi.fetchImage(dataUrl);
-      const detection = await faceapi
-        .detectSingleFace(
-          img,
-          new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
-        )
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-      if (detection) descriptors.push(detection.descriptor);
-      console.log(
-        `FacialRecognition: Loaded descriptor for ${key}, total: ${descriptors.length}`
-      );
-      if (descriptors.length >= 20) break; // Limit to 20 descriptors
-      await new Promise((resolve) => setTimeout(resolve, 100)); // Throttle to avoid performance issues
-      if (!isMounted.current) return descriptors; // Stop if component unmounted
+    try {
+      const db = getFirestore();
+      const userRef = doc(db, "reference_images", user.uid);
+      const docSnap = await getDoc(userRef);
+      if (!docSnap.exists()) {
+        throw new Error("No reference images found in Firestore");
+      }
+      const data = docSnap.data();
+      const images: string[] = data.images || [];
+
+      for (let i = 0; i < images.length; i++) {
+        const dataUrl = images[i];
+        if (!dataUrl) continue;
+        const img = await faceapi.fetchImage(dataUrl);
+        const detection = await faceapi
+          .detectSingleFace(
+            img,
+            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
+          )
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (detection) descriptors.push(detection.descriptor);
+        console.log(
+          `FacialRecognition: Loaded descriptor for image ${i}, total: ${descriptors.length}`
+        );
+        if (descriptors.length >= 20) break; // Limit to 20 descriptors
+        await new Promise((resolve) => setTimeout(resolve, 100)); // Throttle
+        if (!isMounted.current) return descriptors; // Stop if component unmounted
+      }
+      if (descriptors.length < 3)
+        throw new Error("Insufficient valid reference images found");
+      return descriptors;
+    } catch (err) {
+      console.error("FacialRecognition: Error loading reference images:", err);
+      throw err;
     }
-    if (descriptors.length < 3)
-      throw new Error("Insufficient valid reference images found");
-    return descriptors;
   };
 
   const recognizeFace = async () => {
@@ -181,12 +194,12 @@ export default function FacialRecognition({
 
       let blinkDetected = false;
       const startTime = Date.now();
-      const timeout = 50000; // 10 seconds
+      const timeout = 50000; // 50 seconds
 
       while (Date.now() - startTime < timeout) {
         if (!videoRef.current) {
           await new Promise((resolve) => setTimeout(resolve, 100));
-          continue; // wait for video to become available
+          continue;
         }
 
         console.log("FacialRecognition: Checking for blink...");
@@ -195,7 +208,6 @@ export default function FacialRecognition({
         if (result.blinkDetected) {
           blinkDetected = true;
           setErrorMessage("Blink detected! Verifying face...");
-          // Start progress bar animation
           setProgress(0);
           const progressInterval = setInterval(() => {
             setProgress((prev) => {
@@ -203,7 +215,7 @@ export default function FacialRecognition({
                 clearInterval(progressInterval);
                 return 100;
               }
-              return prev + 2; // Increment progress by 2% every 50ms
+              return prev + 2;
             });
           }, 50);
           break;
@@ -232,7 +244,7 @@ export default function FacialRecognition({
         setErrorMessage(
           "No face detected. Please ensure your face is visible."
         );
-        setProgress(0); // Reset progress bar
+        setProgress(0);
         onScanComplete(false);
         return;
       }
@@ -251,12 +263,12 @@ export default function FacialRecognition({
       );
       if (bestMatch.label === "user" && bestMatch.distance < 0.6) {
         setStatus("verified");
-        setProgress(100); // Ensure progress bar completes
+        setProgress(100);
         onScanComplete(true);
       } else {
         setStatus("unknown");
         setErrorMessage("Unknown user found");
-        setProgress(0); // Reset progress bar
+        setProgress(0);
         const imageDataUrl = capturePhoto();
         if (imageDataUrl && userEmail) {
           await notify(imageDataUrl, userEmail);
@@ -267,7 +279,7 @@ export default function FacialRecognition({
       const message = err instanceof Error ? err.message : "Unknown error";
       setStatus("error");
       setErrorMessage(message);
-      setProgress(0); // Reset progress bar
+      setProgress(0);
       onScanComplete(false);
     } finally {
       setStatus("ready");

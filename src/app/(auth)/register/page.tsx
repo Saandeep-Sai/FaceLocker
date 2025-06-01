@@ -141,7 +141,7 @@ export default function RegisterPage() {
                 <FormItem>
                   <FormLabel htmlFor="name">Full Name</FormLabel>
                   <FormControl>
-                    <Input id="name" placeholder="e.g; John" {...field} />
+                    <Input id="name" placeholder="e.g; J" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
