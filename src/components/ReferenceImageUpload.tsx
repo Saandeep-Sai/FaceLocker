@@ -5,15 +5,16 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
   CardHeader,
   CardTitle,
   CardDescription,
+  CardContent,
 } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, ScanFace, AlertCircle } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
-import { getFirestore, collection, addDoc, setDoc, doc, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, deleteDoc } from "firebase/firestore";
+import * as faceapi from "face-api.js";
 
 export default function ReferenceImageUpload() {
   const { user, loading: authLoading } = useAuth();
@@ -30,15 +31,12 @@ export default function ReferenceImageUpload() {
     "Turn your head slightly to the right.",
     "Tilt your head slightly up.",
     "Tilt your head slightly down.",
-    "Look straight with a slight smile.",
-    "Turn your head halfway to the left.",
-    "Turn your head halfway to the right.",
   ]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const faceapiRef = useRef<any>(null);
+  const framesToCapture = 5; // Moved to component scope
 
   const debouncedToast = useCallback(
     (options: {
@@ -65,9 +63,6 @@ export default function ReferenceImageUpload() {
   useEffect(() => {
     const init = async () => {
       try {
-        const faceapi = await import("face-api.js");
-        faceapiRef.current = faceapi;
-
         const MODEL_URL = "/models";
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -85,10 +80,11 @@ export default function ReferenceImageUpload() {
           streamRef.current = stream;
         }
       } catch (error) {
+        console.error("ReferenceImageUpload: Failed to initialize:", error);
         setCameraError("Failed to access camera. Please grant permissions.");
         debouncedToast({
           title: "Camera Error",
-          description: "Failed to access camera.",
+          description: "Failed to access camera. Please check permissions.",
           variant: "destructive",
         });
       }
@@ -112,7 +108,7 @@ export default function ReferenceImageUpload() {
     if (!user) return;
     try {
       const db = getFirestore();
-      await addDoc(collection(db, "reference_upload_logs"), {
+      await setDoc(doc(db, "reference_upload_logs", `${user.uid}_${Date.now()}`), {
         userId: user.uid,
         email: user.email,
         timestamp: new Date().toISOString(),
@@ -132,13 +128,14 @@ export default function ReferenceImageUpload() {
       const userRef = doc(db, "reference_images", user.uid);
       await deleteDoc(userRef);
       setImageCount(0);
+      console.log("Cleared existing images for user:", user.uid);
     } catch (err) {
-      console.error("Failed to clear existing images:", err);
+      console.error("ReferenceImageUpload: Failed to clear existing images:", err);
     }
   };
 
   const captureImage = async () => {
-    if (!canvasRef.current || !videoRef.current || !faceapiRef.current) return null;
+    if (!canvasRef.current || !videoRef.current) return null;
 
     const context = canvasRef.current.getContext("2d");
     if (!context) return null;
@@ -152,24 +149,22 @@ export default function ReferenceImageUpload() {
       canvasRef.current.width,
       canvasRef.current.height
     );
-    const imageData = canvasRef.current.toDataURL("image/jpeg", 0.7);
+    const imageData = canvasRef.current.toDataURL("image/jpeg", 0.5); // Increased compression
 
     const img = new Image();
     img.src = imageData;
     await new Promise((resolve) => (img.onload = resolve));
 
-    const detection = await faceapiRef.current
-      .detectSingleFace(
-        img,
-        new faceapiRef.current.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
-      )
+    const detection = await faceapi
+      .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 }))
       .withFaceLandmarks()
       .withFaceDescriptor();
 
     if (!detection) {
+      console.log("ReferenceImageUpload: No face detected in captured image");
       debouncedToast({
         title: "No Face Detected",
-        description: "Please ensure your face is visible.",
+        description: "Please ensure your face is clearly visible.",
         variant: "destructive",
       });
       return null;
@@ -178,6 +173,7 @@ export default function ReferenceImageUpload() {
     const box = detection.detection.box;
     const minFaceSize = 100;
     if (box.width < minFaceSize || box.height < minFaceSize) {
+      console.log("ReferenceImageUpload: Face too small in captured image");
       debouncedToast({
         title: "Image Quality Issue",
         description: "Face is too small. Please move closer to the camera.",
@@ -186,7 +182,16 @@ export default function ReferenceImageUpload() {
       return null;
     }
 
-    return { imageData, descriptor: detection.descriptor };
+    const imageSizeBytes = Math.round((imageData.length * 3) / 4); // Approximate size in bytes
+    console.log(`ReferenceImageUpload: Captured image size: ${imageSizeBytes} bytes`);
+    return { imageData, descriptor: detection.descriptor, size: imageSizeBytes };
+  };
+
+  const estimateDocumentSize = (images: string[]) => {
+    const data = { images, updatedAt: new Date().toISOString() };
+    const jsonString = JSON.stringify(data);
+    const sizeBytes = new TextEncoder().encode(jsonString).length;
+    return sizeBytes;
   };
 
   const handleStartScanning = async () => {
@@ -200,7 +205,6 @@ export default function ReferenceImageUpload() {
     }
 
     await clearExistingImages();
-
     setIsScanning(true);
     setPromptIndex(0);
     setProgressMessage(prompts[0]);
@@ -210,9 +214,9 @@ export default function ReferenceImageUpload() {
       const userRef = doc(db, "reference_images", user.uid);
       const images: string[] = [];
       let capturedFrames = 0;
-      const framesToCapture = 20;
-      const totalDuration = 80 * 1000;
+      const totalDuration = 20 * 1000; // 20 seconds
       const intervalTime = totalDuration / framesToCapture;
+      const maxDocumentSize = 1_000_000; // Slightly below 1 MB to be safe
 
       await new Promise<void>((resolve) => {
         scanIntervalRef.current = setInterval(async () => {
@@ -222,18 +226,35 @@ export default function ReferenceImageUpload() {
             return;
           }
 
-          setProgressMessage(prompts[capturedFrames]);
+          setProgressMessage(prompts[capturedFrames % prompts.length]);
           const result = await captureImage();
 
           if (result) {
             images.push(result.imageData);
             capturedFrames++;
+            console.log(`ReferenceImageUpload: Captured image ${capturedFrames}, size: ${result.size} bytes`);
+          } else {
+            console.log(`ReferenceImageUpload: Failed to capture image at frame ${capturedFrames + 1}`);
           }
-          setPromptIndex(capturedFrames);
+          setPromptIndex(capturedFrames % prompts.length);
+          setImageCount(capturedFrames);
         }, intervalTime);
       });
 
-      if (images.length > 0) {
+      const documentSize = estimateDocumentSize(images);
+      console.log(`ReferenceImageUpload: Estimated document size: ${documentSize} bytes`);
+
+      if (documentSize > maxDocumentSize) {
+        debouncedToast({
+          title: "Error",
+          description: "Captured images exceed Firestore size limit. Try again with fewer images.",
+          variant: "destructive",
+        });
+        await logUploadAttempt(false, capturedFrames);
+        return;
+      }
+
+      if (images.length >= 3) {
         await setDoc(userRef, { images, updatedAt: new Date().toISOString() });
         setImageCount(capturedFrames);
         debouncedToast({
@@ -244,18 +265,19 @@ export default function ReferenceImageUpload() {
       } else {
         debouncedToast({
           title: "Error",
-          description: "No valid images captured.",
+          description: `Only ${images.length} valid images captured. At least 3 are required.`,
           variant: "destructive",
         });
-        await logUploadAttempt(false, 0);
+        await logUploadAttempt(false, capturedFrames);
       }
     } catch (error: any) {
+      console.error("ReferenceImageUpload: Error during scanning:", error);
       debouncedToast({
         title: "Error",
-        description: "Failed to capture or save images.",
+        description: error.message || "Failed to capture or save images.",
         variant: "destructive",
       });
-      await logUploadAttempt(false, 0);
+      await logUploadAttempt(false, imageCount);
     } finally {
       setIsScanning(false);
       setProgressMessage("");
@@ -276,8 +298,8 @@ export default function ReferenceImageUpload() {
         <CardHeader>
           <CardTitle>Upload Reference Images</CardTitle>
           <CardDescription>
-            Follow the prompts for about 80 seconds to capture reference images.
-            You must be logged in to upload images.
+            Follow the prompts for about 20 seconds to capture 5 reference images.
+            Ensure good lighting and follow the instructions for best results.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -303,18 +325,21 @@ export default function ReferenceImageUpload() {
             </div>
           )}
           <canvas ref={canvasRef} className="hidden" />
-          <Button
-            onClick={handleStartScanning}
-            disabled={isScanning || !!cameraError || !user}
-            className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700"
-          >
-            {isScanning ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <ScanFace className="mr-2 h-4 w-4" />
-            )}
-            Start Scanning (80 Seconds)
-          </Button>
+          <div className="text-center">
+            <p>Images Captured: {imageCount}/{framesToCapture}</p>
+            <Button
+              onClick={handleStartScanning}
+              disabled={isScanning || !!cameraError || !user}
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700"
+            >
+              {isScanning ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <ScanFace className="mr-2 h-4 w-4" />
+              )}
+              Start Scanning (20 Seconds)
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

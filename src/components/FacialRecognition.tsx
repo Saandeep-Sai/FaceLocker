@@ -3,13 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import * as faceapi from "face-api.js";
 import { useAuth } from "@/lib/AuthContext";
-import {
-  getFirestore,
-  collection,
-  addDoc,
-  doc,
-  getDoc,
-} from "firebase/firestore";
+import { getFirestore, collection, addDoc, doc, getDoc } from "firebase/firestore";
 import { detectBlink } from "./blink_detection";
 
 interface FacialRecognitionProps {
@@ -109,7 +103,7 @@ export default function FacialRecognition({
   }, [user]);
 
   const captureDetection = async (
-    retries: number = 5
+    retries: number = 3
   ): Promise<faceapi.WithFaceDescriptor<
     faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>
   > | null> => {
@@ -120,7 +114,7 @@ export default function FacialRecognition({
         const detection = await faceapi
           .detectSingleFace(
             videoRef.current,
-            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 })
+            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
           )
           .withFaceLandmarks()
           .withFaceDescriptor();
@@ -135,13 +129,9 @@ export default function FacialRecognition({
             await new Promise((resolve) => setTimeout(resolve, 100));
             continue;
           }
-          console.log("FacialRecognition: Successfully captured detection");
           return detection;
         }
         attempts++;
-        console.log(
-          `FacialRecognition: No face detected, attempt ${attempts}/${retries}`
-        );
         await new Promise((resolve) => setTimeout(resolve, 100));
       } catch (err) {
         console.error("FacialRecognition: Face detection error:", err);
@@ -164,9 +154,6 @@ export default function FacialRecognition({
       }
       const data = docSnap.data();
       const images: string[] = data.images || [];
-      console.log(
-        `FacialRecognition: Retrieved ${images.length} images from Firestore`
-      );
 
       for (let i = 0; i < images.length; i++) {
         const dataUrl = images[i];
@@ -175,39 +162,20 @@ export default function FacialRecognition({
         const detection = await faceapi
           .detectSingleFace(
             img,
-            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 })
+            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
           )
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (detection) {
-          descriptors.push(detection.descriptor);
-          console.log(
-            `FacialRecognition: Generated descriptor for image ${i + 1}`
-          );
-        } else {
-          console.log(
-            `FacialRecognition: Failed to generate descriptor for image ${
-              i + 1
-            }`
-          );
-        }
-        if (descriptors.length >= 20) break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        if (!isMounted.current) {
-          console.log(
-            "FacialRecognition: Component unmounted, stopping descriptor loading"
-          );
-          return descriptors;
-        }
-      }
-      if (descriptors.length < 3) {
-        throw new Error(
-          `Only ${descriptors.length} valid descriptors generated. Please re-upload at least 3 clear reference images.`
+        if (detection) descriptors.push(detection.descriptor);
+        console.log(
+          `FacialRecognition: Loaded descriptor for image ${i}, total: ${descriptors.length}`
         );
+        if (descriptors.length >= 20) break; // Limit to 20 descriptors
+        await new Promise((resolve) => setTimeout(resolve, 100)); // Throttle
+        if (!isMounted.current) return descriptors; // Stop if component unmounted
       }
-      console.log(
-        `FacialRecognition: Loaded ${descriptors.length} descriptors`
-      );
+      if (descriptors.length < 3)
+        throw new Error("Insufficient valid reference images found");
       return descriptors;
     } catch (err) {
       console.error("FacialRecognition: Error loading reference images:", err);
@@ -226,7 +194,7 @@ export default function FacialRecognition({
 
       let blinkDetected = false;
       const startTime = Date.now();
-      const timeout = 50000;
+      const timeout = 50000; // 50 seconds
 
       while (Date.now() - startTime < timeout) {
         if (!videoRef.current) {
@@ -290,7 +258,8 @@ export default function FacialRecognition({
       const bestMatch = faceMatcher.findBestMatch(liveDescriptor);
 
       console.log(
-        `FacialRecognition: Best match - Label: ${bestMatch.label}, Distance: ${bestMatch.distance}`
+        "FacialRecognition: Best match distance:",
+        bestMatch.distance
       );
       if (bestMatch.label === "user" && bestMatch.distance < 0.6) {
         setStatus("verified");
