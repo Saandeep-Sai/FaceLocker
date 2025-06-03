@@ -19,9 +19,9 @@ const SelectTrigger = React.forwardRef<
   }
 >(({ className, children, variant = "default", ...props }, ref) => {
   const variantStyles = {
-    default: "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-foreground",
+    default: "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800", // Replaced dark:bg-gray-foreground with dark:bg-gray-800
     outline: "border-2 border-blue-500 dark:border-blue-400 bg-transparent",
-    filled: "border-none bg-gray-100 dark:bg-gray-800",
+    filled: "border-none bg-gray-100 dark:bg-gray-700", // Consistent with input fields
   } as const;
 
   return (
@@ -30,11 +30,11 @@ const SelectTrigger = React.forwardRef<
       className={cn(
         "flex h-11 w-full items-center justify-between rounded-lg px-4 py-2 text-base",
         "transition-all duration-200",
-        "text-gray-900 dark:text-gray-100",
-        "placeholder:text-gray-400 dark:placeholder:text-gray-500",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
+        "text-gray-900 dark:text-white", // Changed to dark:text-white for consistency
+        "placeholder:text-gray-400 dark:placeholder:text-gray-400",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:focus-visible:ring-blue-400 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-800",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "[&>span]:-lineclamp-1",
+        "[&>span]:line-clamp-1",
         variantStyles[variant],
         className
       )}
@@ -42,7 +42,7 @@ const SelectTrigger = React.forwardRef<
     >
       {children}
       <SelectPrimitive.Icon asChild>
-        <ChevronDown className="h-5 w-5 text-gray-500 dark:text-gray-400" />
+        <ChevronDown className="h-5 w-5 text-gray-500 dark:text-gray-300" />
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   );
@@ -56,12 +56,12 @@ const SelectScrollUpButton = React.forwardRef<
   <SelectPrimitive.ScrollUpButton
     ref={ref}
     className={cn(
-      "flex cursor-pointer items-center justify-center py-2 text-gray-700 dark:text-gray-300",
+      "flex cursor-pointer items-center justify-center py-2 text-gray-700 dark:text-gray-200", // Lighter text for contrast
       className
     )}
     {...props}
   >
-    <ChevronUp className="h-5 w-5 text-gray-700 dark:text-gray-300" />
+    <ChevronUp className="h-5 w-5 text-gray-700 dark:text-gray-200" />
   </SelectPrimitive.ScrollUpButton>
 ));
 SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName;
@@ -73,12 +73,12 @@ const SelectScrollDownButton = React.forwardRef<
   <SelectPrimitive.ScrollDownButton
     ref={ref}
     className={cn(
-      "flex cursor-pointer items-center justify-center py-2 text-gray-700 dark:text-gray-300",
+      "flex cursor-pointer items-center justify-center py-2 text-gray-700 dark:text-gray-200",
       className
     )}
     {...props}
   >
-    <ChevronDown className="h-5 w-5 text-gray-700 dark:text-gray-300" />
+    <ChevronDown className="h-5 w-5 text-gray-700 dark:text-gray-200" />
   </SelectPrimitive.ScrollDownButton>
 ));
 SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayName;
@@ -90,7 +90,7 @@ const SelectContent = React.forwardRef<
   }
 >(({ className, children, position = "popper", variant = "default", ...props }, ref) => {
   const variantStyles = {
-    default: "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 shadow-xl",
+    default: "bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600", // Updated border to match other components
     minimal: "bg-white dark:bg-gray-800 border-none shadow-md",
   } as const;
 
@@ -100,7 +100,7 @@ const SelectContent = React.forwardRef<
         ref={ref}
         className={cn(
           "relative z-50 max-h-[600px] min-w-[10rem] overflow-hidden rounded-xl border",
-          "text-gray-900 dark:text-gray-100",
+          "text-gray-900 dark:text-white", // Changed to dark:text-white
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -139,7 +139,7 @@ const SelectLabel = React.forwardRef<
   <SelectPrimitive.Label
     ref={ref}
     className={cn(
-      "py-2 px-10 text-base font-semibold text-gray-900 dark:text-gray-100",
+      "py-2 px-10 text-base font-semibold text-gray-900 dark:text-white", // Changed to dark:text-white
       className
     )}
     {...props}
@@ -156,7 +156,7 @@ const SelectItem = React.forwardRef<
     value={value}
     className={cn(
       "relative flex w-full cursor-pointer items-center rounded-lg py-2 px-10 text-base",
-      "text-gray-900 dark:text-gray-100",
+      "text-gray-900 dark:text-white", // Changed to dark:text-white
       "hover:bg-gray-100 dark:hover:bg-gray-700 focus:bg-gray-100 dark:focus:bg-gray-700",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       "transition-all duration-200",
@@ -166,7 +166,7 @@ const SelectItem = React.forwardRef<
   >
     <span className="absolute left-4 flex h-4 w-4 items-center justify-center">
       <SelectPrimitive.ItemIndicator>
-        <Check className="h-5 w-5 text-blue-600 dark:text-blue-500" />
+        <Check className="h-5 w-5 text-blue-600 dark:text-blue-400" />
       </SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -180,7 +180,7 @@ const SelectSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Separator
     ref={ref}
-    className={cn("-mx-2 my-2 h-px bg-gray-200 dark:bg-gray-700", className)}
+    className={cn("-mx-2 my-2 h-px bg-gray-200 dark:bg-gray-600", className)} // Consistent with other borders
     {...props}
   />
 ));
