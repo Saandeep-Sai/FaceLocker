@@ -5,6 +5,7 @@ import { db } from '@/lib/firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import nodemailer from 'nodemailer';
 import bcrypt from 'bcryptjs';
+import { admin } from '@/lib/firebaseAdmin';
 
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
@@ -61,52 +62,60 @@ interface OtpResponse {
 export async function sendOtpAction(email: string): Promise<OtpResponse> {
   try {
     console.log('sendOtpAction started for:', email);
+
     if (!email) {
-      console.error('No email provided');
       return { success: false, message: 'Email is required', expiresAt: null };
     }
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      console.error('Missing SMTP credentials');
       return { success: false, message: 'Server configuration error', expiresAt: null };
     }
 
-    const otpDoc = doc(db, 'otps', email);
-    const docSnap = await getDoc(otpDoc);
-    if (docSnap.exists()) {
+    const db = admin.firestore(); // ✅ use admin SDK here
+    const otpDocRef = db.collection('otps').doc(email);
+    const docSnap = await otpDocRef.get();
+
+    if (docSnap.exists) {
       const data = docSnap.data();
-      const createdAt = new Date(data.createdAt);
-      const timeSinceLastOtp = (Date.now() - createdAt.getTime()) / 1000;
-      if (timeSinceLastOtp < 60) {
-        return { success: false, message: 'Please wait 60 seconds before resending OTP', expiresAt: data.expiresAt };
+      if (data && data.createdAt) {
+        const createdAt = new Date(data.createdAt);
+        const timeSinceLastOtp = (Date.now() - createdAt.getTime()) / 1000;
+        if (timeSinceLastOtp < 60) {
+          return {
+            success: false,
+            message: 'Please wait 60 seconds before resending OTP',
+            expiresAt: data.expiresAt,
+          };
+        }
       }
     }
 
-    const otp = generateOtp();
+    const otp = generateOtp(); // e.g. 6-digit string
     const expiresAt = new Date(Date.now() + 300 * 1000); // 5 minutes
-    console.log('Storing OTP in Firestore for:', email);
-    await setDoc(otpDoc, {
+
+    // Save OTP
+    await otpDocRef.set({
       otp,
       email,
-      expiresAt: expiresAt.toISOString(),
       createdAt: new Date().toISOString(),
+      expiresAt: expiresAt.toISOString(),
     });
-    console.log('OTP stored successfully:', otp);
 
-    console.log('Sending email to:', email);
+    // Send email
     await sendEmail(email, otp);
-    console.log('sendOtpAction completed successfully');
 
     return {
       success: true,
       message: `OTP sent to ${email}`,
       expiresAt: expiresAt.toISOString(),
     };
+
   } catch (error: any) {
     console.error('sendOtpAction error:', {
       message: error.message,
       stack: error.stack,
       code: error.code,
     });
+
     return {
       success: false,
       message: error.message || 'Failed to send OTP',
@@ -123,30 +132,28 @@ interface VerifyOtpResponse {
 export async function verifyOtpAction(email: string, otp: string): Promise<VerifyOtpResponse> {
   try {
     console.log('verifyOtpAction started for:', email);
+
     if (!email || !otp) {
-      console.error('Email or OTP missing');
       return { success: false, message: 'Email and OTP are required' };
     }
 
-    const otpDoc = doc(db, 'otps', email);
-    const docSnap = await getDoc(otpDoc);
+    const db = admin.firestore(); // ✅ use Admin SDK here
+    const otpDocRef = db.collection('otps').doc(email);
+    const docSnap = await otpDocRef.get();
 
-    if (!docSnap.exists()) {
-      console.log('No OTP found for:', email);
+    if (!docSnap.exists) {
       return { success: false, message: 'Invalid or expired OTP' };
     }
 
     const data = docSnap.data();
-    const storedOtp = data.otp;
-    const expiresAt = new Date(data.expiresAt);
+    const storedOtp = data?.otp;
+    const expiresAt = new Date(data?.expiresAt);
 
     if (new Date() > expiresAt) {
-      console.log('OTP expired for:', email);
       return { success: false, message: 'OTP has expired' };
     }
 
     if (storedOtp !== otp) {
-      console.log('Invalid OTP for:', email);
       return { success: false, message: 'Invalid OTP' };
     }
 
@@ -170,32 +177,32 @@ interface VerifyLockerPasswordResponse {
   message: string;
 }
 
-export async function verifyLockerPasswordAction(uid: string, lockerPassword: string): Promise<VerifyLockerPasswordResponse> {
+export async function verifyLockerPasswordAction(
+  uid: string,
+  lockerPassword: string
+): Promise<VerifyLockerPasswordResponse> {
   try {
     console.log('verifyLockerPasswordAction started for UID:', uid);
+
     if (!uid || !lockerPassword) {
-      console.error('UID or locker password missing');
       return { success: false, message: 'UID and locker password are required' };
     }
 
-    const userDoc = doc(db, 'users', uid);
-    const docSnap = await getDoc(userDoc);
+    const db = admin.firestore(); // ✅ Use Admin SDK
+    const userDoc = await db.collection('users').doc(uid).get();
 
-    if (!docSnap.exists()) {
-      console.log('No user found for UID:', uid);
+    if (!userDoc.exists) {
       return { success: false, message: 'User not found' };
     }
 
-    const data = docSnap.data();
-    const storedLockerPassword = data.lockerPassword;
+    const data = userDoc.data();
+    const storedLockerPassword = data?.lockerPassword;
 
     const isMatch = await bcrypt.compare(lockerPassword, storedLockerPassword);
     if (!isMatch) {
-      console.log('Invalid locker password for UID:', uid);
       return { success: false, message: 'Invalid locker password' };
     }
 
-    console.log('Locker password verified successfully for UID:', uid);
     return { success: true, message: 'Locker password verified successfully' };
   } catch (error: any) {
     console.error('verifyLockerPasswordAction error:', {

@@ -30,14 +30,12 @@ export default function FacialRecognition({
   const capturePhoto = (): string | null => {
     try {
       if (!videoRef.current || !canvasRef.current) return null;
-      const context = canvasRef.current.getContext(
-        "2d"
-      ) as CanvasRenderingContext2D;
+      const context = canvasRef.current.getContext("2d") as CanvasRenderingContext2D;
       if (!context) return null;
       canvasRef.current.width = videoRef.current.videoWidth;
       canvasRef.current.height = videoRef.current.videoHeight;
       context.drawImage(videoRef.current, 0, 0);
-      const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.8);
+      const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.5);
       return dataUrl.startsWith("data:image/jpeg;base64,") ? dataUrl : null;
     } catch (err) {
       console.error("FacialRecognition: Error capturing photo:", err);
@@ -47,8 +45,7 @@ export default function FacialRecognition({
 
   const notify = async (imageDataUrl: string, email: string): Promise<void> => {
     try {
-      if (!email || !imageDataUrl)
-        throw new Error("Invalid email or image data");
+      if (!email || !imageDataUrl) throw new Error("Invalid email or image data");
       const db = getFirestore();
       const timestamp = new Date().toISOString();
       await addDoc(collection(db, "unknown_user_logs"), {
@@ -66,10 +63,7 @@ export default function FacialRecognition({
       });
       if (!response.ok) throw new Error("Failed to send email");
     } catch (err) {
-      console.error(
-        "FacialRecognition: Failed to save log or send email:",
-        err
-      );
+      console.error("FacialRecognition: Failed to save log or send email:", err);
       setErrorMessage("Failed to log unknown user or send email");
     }
   };
@@ -103,7 +97,7 @@ export default function FacialRecognition({
   }, [user]);
 
   const captureDetection = async (
-    retries: number = 3
+    retries: number = 5
   ): Promise<faceapi.WithFaceDescriptor<
     faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>
   > | null> => {
@@ -114,7 +108,7 @@ export default function FacialRecognition({
         const detection = await faceapi
           .detectSingleFace(
             videoRef.current,
-            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
+            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 })
           )
           .withFaceLandmarks()
           .withFaceDescriptor();
@@ -122,16 +116,16 @@ export default function FacialRecognition({
           const box = detection.detection.box;
           const minFaceSize = 100;
           if (box.width < minFaceSize || box.height < minFaceSize) {
-            setErrorMessage(
-              "Face is too small. Please move closer to the camera."
-            );
+            setErrorMessage("Face is too small. Please move closer to the camera.");
             attempts++;
             await new Promise((resolve) => setTimeout(resolve, 100));
             continue;
           }
+          console.log("FacialRecognition: Successfully captured detection");
           return detection;
         }
         attempts++;
+        console.log(`FacialRecognition: No face detected, attempt ${attempts}/${retries}`);
         await new Promise((resolve) => setTimeout(resolve, 100));
       } catch (err) {
         console.error("FacialRecognition: Face detection error:", err);
@@ -154,6 +148,7 @@ export default function FacialRecognition({
       }
       const data = docSnap.data();
       const images: string[] = data.images || [];
+      console.log(`FacialRecognition: Retrieved ${images.length} images from Firestore`);
 
       for (let i = 0; i < images.length; i++) {
         const dataUrl = images[i];
@@ -162,20 +157,28 @@ export default function FacialRecognition({
         const detection = await faceapi
           .detectSingleFace(
             img,
-            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 })
+            new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.3 })
           )
           .withFaceLandmarks()
           .withFaceDescriptor();
-        if (detection) descriptors.push(detection.descriptor);
-        console.log(
-          `FacialRecognition: Loaded descriptor for image ${i}, total: ${descriptors.length}`
-        );
-        if (descriptors.length >= 20) break; // Limit to 20 descriptors
-        await new Promise((resolve) => setTimeout(resolve, 100)); // Throttle
-        if (!isMounted.current) return descriptors; // Stop if component unmounted
+        if (detection) {
+          descriptors.push(detection.descriptor);
+          console.log(`FacialRecognition: Generated descriptor for image ${i + 1}`);
+        } else {
+          console.log(`FacialRecognition: Failed to generate descriptor for image ${i + 1}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (!isMounted.current) {
+          console.log("FacialRecognition: Component unmounted, stopping descriptor loading");
+          return descriptors;
+        }
       }
-      if (descriptors.length < 3)
-        throw new Error("Insufficient valid reference images found");
+      if (descriptors.length < 3) {
+        throw new Error(
+          `Only ${descriptors.length} valid descriptors generated. Please re-upload at least 3 clear reference images.`
+        );
+      }
+      console.log(`FacialRecognition: Loaded ${descriptors.length} descriptors`);
       return descriptors;
     } catch (err) {
       console.error("FacialRecognition: Error loading reference images:", err);
@@ -194,7 +197,7 @@ export default function FacialRecognition({
 
       let blinkDetected = false;
       const startTime = Date.now();
-      const timeout = 50000; // 50 seconds
+      const timeout = 50000;
 
       while (Date.now() - startTime < timeout) {
         if (!videoRef.current) {
@@ -241,9 +244,7 @@ export default function FacialRecognition({
       const detection = await captureDetection();
       if (!detection) {
         setStatus("error");
-        setErrorMessage(
-          "No face detected. Please ensure your face is visible."
-        );
+        setErrorMessage("No face detected. Please ensure your face is visible.");
         setProgress(0);
         onScanComplete(false);
         return;
@@ -258,8 +259,7 @@ export default function FacialRecognition({
       const bestMatch = faceMatcher.findBestMatch(liveDescriptor);
 
       console.log(
-        "FacialRecognition: Best match distance:",
-        bestMatch.distance
+        `FacialRecognition: Best match - Label: ${bestMatch.label}, Distance: ${bestMatch.distance}`
       );
       if (bestMatch.label === "user" && bestMatch.distance < 0.6) {
         setStatus("verified");

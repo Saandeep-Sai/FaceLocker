@@ -36,60 +36,84 @@ function generateOtp(): string {
 
 export async function sendOtpAction(email: string) {
   try {
+    // Dynamically load and initialize Admin SDK
+    const adminModule = await import('firebase-admin');
+    const admin = adminModule.default || adminModule;
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID!,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, '\n'),
+        }),
+      });
+    }
+    const firestoreAdmin = admin.firestore();
+
+    // Generate OTP & timestamps
     const otp = generateOtp();
-    const expiresAt = new Date(Date.now() + 300 * 1000);
-    const otpDoc = doc(db, 'otps', email);
-    console.log('Attempting to store OTP for:', email);
-    await setDoc(otpDoc, {
-      otp,
-      email,
-      expiresAt: expiresAt.toISOString(),
-      createdAt: new Date().toISOString(),
-    });
-    console.log('OTP stored for:', email, 'OTP:', otp);
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString();
+
+    // Rate-limit check in Admin DB
+    const ref = firestoreAdmin.collection('otps').doc(email);
+    const snap = await ref.get();
+    if (snap.exists) {
+      const since = (now.getTime() - new Date(snap.data()!.createdAt).getTime()) / 1000;
+      if (since < 60) {
+        return { success: false, message: 'Please wait before requesting another OTP', expiresAt: snap.data()!.expiresAt };
+      }
+    }
+
+    // Write via Admin SDK
+    await ref.set({ otp, email, createdAt, expiresAt });
+
+    // Send email as before
     await sendEmail(email, otp);
-    return {
-      success: true,
-      message: `OTP sent to ${email}`,
-      expiresAt: expiresAt.toISOString(),
-    };
+
+    return { success: true, message: `OTP sent to ${email}`, expiresAt };
   } catch (error: any) {
-    console.error('Error sending OTP:', error.message, error.code);
-    return {
-      success: false,
-      message: error.message || 'Failed to send OTP',
-    };
+    console.error('sendOtpAction error:', error.message, error.code);
+    return { success: false, message: error.message || 'Failed to send OTP' };
   }
 }
 
+
 export async function verifyOtpAction(email: string, otp: string) {
   try {
-    const otpDoc = doc(db, 'otps', email);
-    console.log('Attempting to read OTP for:', email);
-    const docSnap = await getDoc(otpDoc);
-    console.log('OTP doc exists:', docSnap.exists());
-    if (!docSnap.exists()) {
-      console.log('No OTP found for:', email);
+    // Dynamically load and initialize Admin SDK
+    const adminModule = await import('firebase-admin');
+    const admin = adminModule.default || adminModule;
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID!,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+          privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, '\n'),
+        }),
+      });
+    }
+    const firestoreAdmin = admin.firestore();
+
+    // Read via Admin SDK
+    const ref = firestoreAdmin.collection('otps').doc(email);
+    const snap = await ref.get();
+    if (!snap.exists) {
       return { success: false, message: 'Invalid or expired OTP' };
     }
-    const data = docSnap.data();
-    const storedOtp = data.otp;
-    const expiresAt = new Date(data.expiresAt);
-    if (new Date() > expiresAt) {
-      console.log('OTP expired for:', email);
-      return { success: false, message: 'OTP has expired' };
-    }
-    if (storedOtp !== otp) {
-      console.log('Invalid OTP for:', email);
+
+    const data = snap.data()!;
+    if (otp !== data.otp) {
       return { success: false, message: 'Invalid OTP' };
     }
-    console.log('OTP verified for:', email);
+    if (new Date() > new Date(data.expiresAt)) {
+      return { success: false, message: 'OTP has expired' };
+    }
+
     return { success: true, message: 'OTP verified successfully' };
   } catch (error: any) {
-    console.error('Error verifying OTP:', error.message, error.code);
-    return {
-      success: false,
-      message: error.message || 'Failed to verify OTP',
-    };
+    console.error('verifyOtpAction error:', error.message, error.code);
+    return { success: false, message: error.message || 'Failed to verify OTP' };
   }
 }
